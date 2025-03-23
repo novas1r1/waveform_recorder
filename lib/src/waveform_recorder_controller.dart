@@ -33,6 +33,9 @@ class WaveformRecorderController extends ChangeNotifier {
   /// Default is platform-dependent: WAV for web, AAC-LC for other platforms.
   final AudioEncoder encoder;
 
+  /// The collector for amplitude values during recording.
+  final List<waveform.Amplitude> amplitudes = [];
+
   Stream<waveform.Amplitude>? _amplitudeStream;
   AudioRecorder? _audioRecorder;
   XFile? _file;
@@ -75,6 +78,7 @@ class WaveformRecorderController extends ChangeNotifier {
   void dispose() {
     _amplitudeStream = null;
     unawaited(_audioRecorder?.dispose());
+    amplitudes.clear();
     _audioRecorder = null;
     _file = null;
     _length = Duration.zero;
@@ -109,9 +113,14 @@ class WaveformRecorderController extends ChangeNotifier {
     _stopwatch.start();
 
     // map the amplitude types as they stream in
-    _amplitudeStream = _audioRecorder!.onAmplitudeChanged(interval).map(
+    _amplitudeStream = _audioRecorder!
+        .onAmplitudeChanged(interval)
+        .map(
           (a) => waveform.Amplitude(current: a.current, max: a.max),
-        );
+        )
+        .asBroadcastStream();
+
+    _amplitudeStream!.listen(amplitudes.add);
 
     notifyListeners();
   }
@@ -168,6 +177,7 @@ class WaveformRecorderController extends ChangeNotifier {
     if (await _audioRecorder!.isPaused()) {
       await _audioRecorder!.resume();
       _stopwatch.start();
+      _amplitudeStream!.listen(amplitudes.add);
     }
 
     notifyListeners();
@@ -183,6 +193,9 @@ class WaveformRecorderController extends ChangeNotifier {
     if (_audioRecorder == null) throw Exception('Not recording');
     assert(_file == null);
     assert(_length == Duration.zero);
+
+    // Stop collecting amplitudes and clear the collection
+    amplitudes.clear();
 
     // stop the recording, deleting the temp file (if there is one)
     final path = await _audioRecorder!.stop() ?? '';
@@ -208,10 +221,7 @@ class WaveformRecorderController extends ChangeNotifier {
   }
 
   String _extFor(AudioEncoder encoder) => switch (encoder) {
-        AudioEncoder.aacLc ||
-        AudioEncoder.aacEld ||
-        AudioEncoder.aacHe =>
-          'm4a',
+        AudioEncoder.aacLc || AudioEncoder.aacEld || AudioEncoder.aacHe => 'm4a',
         AudioEncoder.amrNb || AudioEncoder.amrWb => '3gp',
         AudioEncoder.opus => 'opus',
         AudioEncoder.flac => 'flac',
